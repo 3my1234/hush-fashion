@@ -1,0 +1,10 @@
+node_modules/
+.env
+npm-debug.log*
+.yarn-integrity
+.DS_Store
+dist/
+.npm-cache/
+db/*.db
+db/*.db-shm
+db/*.db-wal

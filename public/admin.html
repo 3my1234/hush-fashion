@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Hush | Admin</title>
+  <link rel="stylesheet" href="/css/styles.css" />
+</head>
+<body>
+  <div class="container">
+    <div class="topbar">
+      <div class="brand">HUSH ADMIN</div>
+      <a href="/">Back To Store</a>
+    </div>
+
+    <div class="layout">
+      <section class="panel">
+        <h3>Orders Inbox</h3>
+        <div id="orders" class="list"></div>
+      </section>
+
+      <section class="panel">
+        <h3>Order Thread</h3>
+        <p class="muted">Select an order to view and reply.</p>
+        <div id="thread" class="list"></div>
+        <form id="adminMessageForm">
+          <label>Sender Name <input id="adminName" value="Hush Admin" required /></label>
+          <label>Message <textarea id="adminBody" required></textarea></label>
+          <label>Attachment URL (optional) <input id="adminAttachmentUrl" placeholder="https://... or s3://key" /></label>
+          <label>Attachment Name (optional) <input id="adminAttachmentName" /></label>
+          <button type="submit">Send Reply</button>
+        </form>
+        <p id="adminStatus" class="muted"></p>
+      </section>
+    </div>
+  </div>
+  <script src="/js/admin.js"></script>
+</body>
+</html>
