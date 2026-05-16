@@ -58,7 +58,8 @@
             <label>Color <input id="productColor" required /></label>
             <label>Sizes (comma-separated) <input id="productSizes" placeholder="S,M,L,XL" required /></label>
           </div>
-          <label>Image URL <input id="productImage" required /></label>
+          <label>Product Image <input id="productImageFile" type="file" accept="image/*" /></label>
+          <label>Image URL (auto-filled after upload or paste manually) <input id="productImage" required /></label>
           <label>Description <textarea id="productDescription"></textarea></label>
           <div style="display:flex;gap:.5rem;">
             <button type="submit" id="productSubmitBtn">Create Product</button>

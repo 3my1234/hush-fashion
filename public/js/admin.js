@@ -98,8 +98,32 @@ function resetProductForm() {
   document.getElementById("productColor").value = "";
   document.getElementById("productSizes").value = "";
   document.getElementById("productImage").value = "";
+  document.getElementById("productImageFile").value = "";
   document.getElementById("productDescription").value = "";
   setProductFormMode(false);
+}
+
+async function uploadProductImageIfSelected() {
+  const fileInput = document.getElementById("productImageFile");
+  const file = fileInput.files[0];
+  if (!file) return document.getElementById("productImage").value.trim();
+
+  const presignRes = await fetch("/api/uploads/presign", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ fileName: file.name, contentType: file.type || "application/octet-stream" })
+  });
+  const signed = await presignRes.json();
+  if (!presignRes.ok) throw new Error(signed.error || "Failed to get upload URL.");
+
+  const uploadRes = await fetch(signed.uploadUrl, {
+    method: "PUT",
+    headers: { "Content-Type": file.type || "application/octet-stream" },
+    body: file
+  });
+  if (!uploadRes.ok) throw new Error("Failed to upload image to S3.");
+
+  return signed.persistentUrl;
 }
 
 async function loadProductsForAdmin() {
@@ -213,34 +237,44 @@ document.getElementById("resetPasswordForm").addEventListener("submit", async (e
 document.getElementById("productForm").addEventListener("submit", async (e) => {
   e.preventDefault();
   productStatus.textContent = "";
-  const productId = document.getElementById("productId").value;
-  const payload = {
-    name: document.getElementById("productName").value,
-    category: document.getElementById("productCategory").value,
-    price: Number(document.getElementById("productPrice").value),
-    color: document.getElementById("productColor").value,
-    size_options: document.getElementById("productSizes").value
-      .split(",")
-      .map((s) => s.trim())
-      .filter(Boolean),
-    image_url: document.getElementById("productImage").value,
-    description: document.getElementById("productDescription").value
-  };
-  const endpoint = productId ? `/api/admin/products/${productId}` : "/api/admin/products";
-  const method = productId ? "PATCH" : "POST";
-  const res = await fetch(endpoint, {
-    method,
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload)
-  });
-  const body = await res.json();
-  if (!res.ok) {
-    productStatus.textContent = body.error || "Unable to save product.";
-    return;
+  try {
+    const productId = document.getElementById("productId").value;
+    const imageUrl = await uploadProductImageIfSelected();
+    if (!imageUrl) {
+      productStatus.textContent = "Please upload an image or provide an image URL.";
+      return;
+    }
+    document.getElementById("productImage").value = imageUrl;
+    const payload = {
+      name: document.getElementById("productName").value,
+      category: document.getElementById("productCategory").value,
+      price: Number(document.getElementById("productPrice").value),
+      color: document.getElementById("productColor").value,
+      size_options: document.getElementById("productSizes").value
+        .split(",")
+        .map((s) => s.trim())
+        .filter(Boolean),
+      image_url: imageUrl,
+      description: document.getElementById("productDescription").value
+    };
+    const endpoint = productId ? `/api/admin/products/${productId}` : "/api/admin/products";
+    const method = productId ? "PATCH" : "POST";
+    const res = await fetch(endpoint, {
+      method,
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload)
+    });
+    const body = await res.json();
+    if (!res.ok) {
+      productStatus.textContent = body.error || "Unable to save product.";
+      return;
+    }
+    productStatus.textContent = productId ? "Product updated." : "Product created.";
+    resetProductForm();
+    await loadProductsForAdmin();
+  } catch (error) {
+    productStatus.textContent = error.message || "Unable to save product.";
   }
-  productStatus.textContent = productId ? "Product updated." : "Product created.";
-  resetProductForm();
-  await loadProductsForAdmin();
 });
 
 document.getElementById("productCancelEditBtn").addEventListener("click", () => {

@@ -234,7 +234,16 @@ app.get("/api/products", async (req, res) => {
   const result = category
     ? await query("SELECT * FROM products WHERE category = $1 ORDER BY id DESC", [category])
     : await query("SELECT * FROM products ORDER BY id DESC");
-  const products = result.rows.map((r) => ({ ...r, size_options: r.size_options.split(",") }));
+  const products = await Promise.all(
+    result.rows.map(async (r) => ({
+      ...r,
+      image_url:
+        r.image_url && r.image_url.startsWith("s3://")
+          ? await createDownloadUrl(r.image_url.replace("s3://", ""))
+          : r.image_url,
+      size_options: r.size_options.split(",")
+    }))
+  );
   res.json(products);
 });
 
@@ -312,7 +321,20 @@ app.get("/api/orders", requireAdmin, async (_req, res) => {
      JOIN products p ON p.id = o.product_id
      ORDER BY o.id DESC`
   );
-  res.json(rows.rows);
+  const orders = await Promise.all(
+    rows.rows.map(async (o) => ({
+      ...o,
+      product_image:
+        o.product_image && o.product_image.startsWith("s3://")
+          ? await createDownloadUrl(o.product_image.replace("s3://", ""))
+          : o.product_image,
+      product_image_snapshot:
+        o.product_image_snapshot && o.product_image_snapshot.startsWith("s3://")
+          ? await createDownloadUrl(o.product_image_snapshot.replace("s3://", ""))
+          : o.product_image_snapshot
+    }))
+  );
+  res.json(orders);
 });
 
 app.post("/api/orders", requireUser, async (req, res) => {
