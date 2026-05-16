@@ -4,6 +4,8 @@ const productsEl = document.getElementById("products");
 const selectedProductEl = document.getElementById("selectedProduct");
 const formStatus = document.getElementById("formStatus");
 const msgStatus = document.getElementById("msgStatus");
+const liveClientNotice = document.getElementById("liveClientNotice");
+let stream = null;
 
 async function loadProducts(category = "all") {
   const q = category === "all" ? "" : `?category=${category}`;
@@ -71,6 +73,7 @@ document.getElementById("orderForm").addEventListener("submit", async (e) => {
   }
   formStatus.textContent = `Order placed successfully. Your order ID is ${body.id}.`;
   document.getElementById("msgOrderId").value = body.id;
+  startClientNotifications(body.id);
 });
 
 document.getElementById("messageForm").addEventListener("submit", async (e) => {
@@ -92,5 +95,22 @@ document.getElementById("messageForm").addEventListener("submit", async (e) => {
   const body = await res.json();
   msgStatus.textContent = res.ok ? "Message sent to admin." : body.error || "Failed to send message.";
 });
+
+document.getElementById("msgOrderId").addEventListener("change", (e) => {
+  const id = Number(e.target.value);
+  if (id) startClientNotifications(id);
+});
+
+function startClientNotifications(orderId) {
+  if (!orderId) return;
+  if (stream) stream.close();
+  stream = new EventSource(`/api/stream/client?orderId=${orderId}`);
+  stream.onmessage = (event) => {
+    const data = JSON.parse(event.data);
+    if (data.type === "new-admin-message") {
+      liveClientNotice.textContent = `Admin replied on order #${data.orderId}.`;
+    }
+  };
+}
 
 loadProducts();

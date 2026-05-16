@@ -10,8 +10,13 @@
   <div class="container">
     <div class="topbar">
       <div class="brand">HUSH ADMIN</div>
-      <a href="/">Back To Store</a>
+      <div style="display:flex;gap:.5rem;align-items:center;">
+        <span id="adminIdentity" class="muted"></span>
+        <button id="logoutBtn" class="ghost" type="button">Logout</button>
+        <a href="/">Back To Store</a>
+      </div>
     </div>
+    <p id="liveAdminNotice" class="muted"></p>
 
     <div class="layout">
       <section class="panel">
@@ -24,13 +29,35 @@
         <p class="muted">Select an order to view and reply.</p>
         <div id="thread" class="list"></div>
         <form id="adminMessageForm">
-          <label>Sender Name <input id="adminName" value="Hush Admin" required /></label>
+          <label>Sender Name <input id="adminName" value="Hush Admin" readonly required /></label>
           <label>Message <textarea id="adminBody" required></textarea></label>
           <label>Attachment URL (optional) <input id="adminAttachmentUrl" placeholder="https://... or s3://key" /></label>
           <label>Attachment Name (optional) <input id="adminAttachmentName" /></label>
           <button type="submit">Send Reply</button>
         </form>
         <p id="adminStatus" class="muted"></p>
+      </section>
+    </div>
+
+    <div class="layout" style="margin-top:1rem;">
+      <section class="panel">
+        <h3>Create Admin</h3>
+        <form id="createAdminForm">
+          <label>Full Name <input id="newAdminName" required /></label>
+          <label>Email <input id="newAdminEmail" type="email" required /></label>
+          <label>Temporary Password <input id="newAdminPassword" type="password" required minlength="8" /></label>
+          <button type="submit">Create Admin User</button>
+        </form>
+        <p id="createAdminStatus" class="muted"></p>
+      </section>
+      <section class="panel">
+        <h3>Reset My Password</h3>
+        <form id="resetPasswordForm">
+          <label>Current Password <input id="currentPassword" type="password" required /></label>
+          <label>New Password <input id="newPassword" type="password" required minlength="8" /></label>
+          <button type="submit">Reset Password</button>
+        </form>
+        <p id="resetPasswordStatus" class="muted"></p>
       </section>
     </div>
   </div>

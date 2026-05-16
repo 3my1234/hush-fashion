@@ -2,6 +2,9 @@ require("dotenv").config();
 const express = require("express");
 const cors = require("cors");
 const path = require("path");
+const jwt = require("jsonwebtoken");
+const bcrypt = require("bcryptjs");
+const cookieParser = require("cookie-parser");
 const db = require("./db/init");
 const { createUploadUrl, createDownloadUrl } = require("./s3");
 
@@ -10,9 +13,148 @@ const port = process.env.PORT || 3000;
 
 app.use(cors());
 app.use(express.json({ limit: "10mb" }));
+app.use(cookieParser());
 app.use(express.static(path.join(__dirname, "public")));
 
+const JWT_SECRET = process.env.JWT_SECRET || "change-this-in-production";
+const COOKIE_NAME = "hush_admin_session";
+const adminStreams = new Set();
+const clientStreamsByOrder = new Map();
+
+function emitAdminEvent(payload) {
+  const data = `data: ${JSON.stringify(payload)}\n\n`;
+  for (const res of adminStreams) res.write(data);
+}
+
+function emitClientEvent(orderId, payload) {
+  const streamSet = clientStreamsByOrder.get(orderId);
+  if (!streamSet) return;
+  const data = `data: ${JSON.stringify(payload)}\n\n`;
+  for (const res of streamSet) res.write(data);
+}
+
+function authFromRequest(req) {
+  try {
+    const token = req.cookies[COOKIE_NAME];
+    if (!token) return null;
+    return jwt.verify(token, JWT_SECRET);
+  } catch {
+    return null;
+  }
+}
+
+function requireAdmin(req, res, next) {
+  const user = authFromRequest(req);
+  if (!user) return res.status(401).json({ error: "Unauthorized" });
+  req.admin = user;
+  next();
+}
+
 app.get("/health", (_req, res) => res.json({ ok: true }));
+
+app.get("/api/admin/bootstrap-status", (_req, res) => {
+  const count = db.prepare("SELECT COUNT(*) AS c FROM admins").get().c;
+  res.json({ needsBootstrap: count === 0 });
+});
+
+app.post("/api/admin/bootstrap", (req, res) => {
+  const count = db.prepare("SELECT COUNT(*) AS c FROM admins").get().c;
+  if (count > 0) return res.status(400).json({ error: "Bootstrap already completed." });
+  const { email, password, full_name } = req.body;
+  if (!email || !password || !full_name) {
+    return res.status(400).json({ error: "email, password, full_name are required" });
+  }
+  if (String(password).length < 8) {
+    return res.status(400).json({ error: "Password must be at least 8 characters." });
+  }
+  const passwordHash = bcrypt.hashSync(password, 12);
+  const info = db
+    .prepare("INSERT INTO admins(email, password_hash, full_name) VALUES (?, ?, ?)")
+    .run(String(email).trim().toLowerCase(), passwordHash, String(full_name).trim());
+  const admin = db.prepare("SELECT id, email, full_name FROM admins WHERE id = ?").get(info.lastInsertRowid);
+  const token = jwt.sign(admin, JWT_SECRET, { expiresIn: "7d" });
+  res.cookie(COOKIE_NAME, token, { httpOnly: true, sameSite: "lax", secure: process.env.NODE_ENV === "production" });
+  res.status(201).json({ admin });
+});
+
+app.post("/api/admin/login", (req, res) => {
+  const { email, password } = req.body;
+  if (!email || !password) return res.status(400).json({ error: "email and password required" });
+  const admin = db
+    .prepare("SELECT id, email, full_name, password_hash FROM admins WHERE email = ?")
+    .get(String(email).trim().toLowerCase());
+  if (!admin || !bcrypt.compareSync(password, admin.password_hash)) {
+    return res.status(401).json({ error: "Invalid credentials" });
+  }
+  const token = jwt.sign(
+    { id: admin.id, email: admin.email, full_name: admin.full_name },
+    JWT_SECRET,
+    { expiresIn: "7d" }
+  );
+  res.cookie(COOKIE_NAME, token, { httpOnly: true, sameSite: "lax", secure: process.env.NODE_ENV === "production" });
+  res.json({ admin: { id: admin.id, email: admin.email, full_name: admin.full_name } });
+});
+
+app.post("/api/admin/logout", (_req, res) => {
+  res.clearCookie(COOKIE_NAME);
+  res.json({ ok: true });
+});
+
+app.get("/api/admin/me", requireAdmin, (req, res) => {
+  res.json({ admin: req.admin });
+});
+
+app.post("/api/admin/reset-password", requireAdmin, (req, res) => {
+  const { currentPassword, newPassword } = req.body;
+  if (!currentPassword || !newPassword) {
+    return res.status(400).json({ error: "currentPassword and newPassword are required" });
+  }
+  if (String(newPassword).length < 8) {
+    return res.status(400).json({ error: "New password must be at least 8 characters." });
+  }
+  const row = db.prepare("SELECT password_hash FROM admins WHERE id = ?").get(req.admin.id);
+  if (!row || !bcrypt.compareSync(currentPassword, row.password_hash)) {
+    return res.status(400).json({ error: "Current password is incorrect." });
+  }
+  const nextHash = bcrypt.hashSync(newPassword, 12);
+  db.prepare("UPDATE admins SET password_hash = ? WHERE id = ?").run(nextHash, req.admin.id);
+  res.json({ ok: true });
+});
+
+app.get("/api/admin/users", requireAdmin, (_req, res) => {
+  const rows = db
+    .prepare(
+      `SELECT a.id, a.email, a.full_name, a.created_at, creator.full_name AS created_by_name
+       FROM admins a
+       LEFT JOIN admins creator ON creator.id = a.created_by
+       ORDER BY a.id ASC`
+    )
+    .all();
+  res.json(rows);
+});
+
+app.post("/api/admin/users", requireAdmin, (req, res) => {
+  const { email, password, full_name } = req.body;
+  if (!email || !password || !full_name) {
+    return res.status(400).json({ error: "email, password, full_name are required" });
+  }
+  if (String(password).length < 8) {
+    return res.status(400).json({ error: "Password must be at least 8 characters." });
+  }
+  const passwordHash = bcrypt.hashSync(password, 12);
+  try {
+    const info = db
+      .prepare("INSERT INTO admins(email, password_hash, full_name, created_by) VALUES (?, ?, ?, ?)")
+      .run(String(email).trim().toLowerCase(), passwordHash, String(full_name).trim(), req.admin.id);
+    const user = db.prepare("SELECT id, email, full_name FROM admins WHERE id = ?").get(info.lastInsertRowid);
+    res.status(201).json(user);
+  } catch (error) {
+    if (String(error.message).includes("UNIQUE")) {
+      return res.status(409).json({ error: "Email is already in use." });
+    }
+    res.status(500).json({ error: "Unable to create admin." });
+  }
+});
 
 app.get("/api/products", (req, res) => {
   const category = req.query.category;
@@ -26,7 +168,7 @@ app.get("/api/products", (req, res) => {
   res.json(products);
 });
 
-app.get("/api/orders", (_req, res) => {
+app.get("/api/orders", requireAdmin, (_req, res) => {
   const rows = db
     .prepare(
       `SELECT o.*, p.name as product_name, p.image_url as product_image, p.price as product_price
@@ -81,10 +223,15 @@ app.post("/api/orders", (req, res) => {
       Number(quantity) || 1,
       (note || "").trim()
     );
+  emitAdminEvent({
+    type: "new-order",
+    orderId: Number(info.lastInsertRowid),
+    clientName: client_name
+  });
   res.status(201).json({ id: info.lastInsertRowid });
 });
 
-app.patch("/api/orders/:orderId/status", (req, res) => {
+app.patch("/api/orders/:orderId/status", requireAdmin, (req, res) => {
   const orderId = Number(req.params.orderId);
   const status = req.body.status;
   if (!["new", "contacted", "fulfilled", "cancelled"].includes(status)) {
@@ -117,9 +264,16 @@ app.get("/api/orders/:orderId/messages", async (req, res) => {
 
 app.post("/api/orders/:orderId/messages", (req, res) => {
   const orderId = Number(req.params.orderId);
-  const { sender_role, sender_name, body, attachment_url, attachment_name } = req.body;
-  if (!["client", "admin"].includes(sender_role) || !sender_name || !body) {
+  const authAdmin = authFromRequest(req);
+  let { sender_role, sender_name, body, attachment_url, attachment_name } = req.body;
+  if (!sender_name || !body) {
     return res.status(400).json({ error: "Missing required message fields" });
+  }
+  if (sender_role === "admin") {
+    if (!authAdmin) return res.status(401).json({ error: "Unauthorized admin sender." });
+    sender_name = authAdmin.full_name;
+  } else {
+    sender_role = "client";
   }
   const order = db.prepare("SELECT id FROM orders WHERE id = ?").get(orderId);
   if (!order) return res.status(404).json({ error: "Order not found" });
@@ -138,7 +292,41 @@ app.post("/api/orders/:orderId/messages", (req, res) => {
       (attachment_url || "").trim() || null,
       (attachment_name || "").trim() || null
     );
+  if (sender_role === "client") {
+    emitAdminEvent({ type: "new-client-message", orderId, senderName: sender_name });
+  } else {
+    emitClientEvent(orderId, { type: "new-admin-message", orderId, senderName: sender_name });
+  }
   res.status(201).json({ id: info.lastInsertRowid });
+});
+
+app.get("/api/stream/admin", requireAdmin, (req, res) => {
+  res.setHeader("Content-Type", "text/event-stream");
+  res.setHeader("Cache-Control", "no-cache");
+  res.setHeader("Connection", "keep-alive");
+  res.flushHeaders();
+  adminStreams.add(res);
+  res.write(`data: ${JSON.stringify({ type: "connected", ts: Date.now() })}\n\n`);
+  req.on("close", () => adminStreams.delete(res));
+});
+
+app.get("/api/stream/client", (req, res) => {
+  const orderId = Number(req.query.orderId);
+  if (!orderId) return res.status(400).json({ error: "orderId is required" });
+  res.setHeader("Content-Type", "text/event-stream");
+  res.setHeader("Cache-Control", "no-cache");
+  res.setHeader("Connection", "keep-alive");
+  res.flushHeaders();
+  const set = clientStreamsByOrder.get(orderId) || new Set();
+  set.add(res);
+  clientStreamsByOrder.set(orderId, set);
+  res.write(`data: ${JSON.stringify({ type: "connected", orderId, ts: Date.now() })}\n\n`);
+  req.on("close", () => {
+    const bucket = clientStreamsByOrder.get(orderId);
+    if (!bucket) return;
+    bucket.delete(res);
+    if (!bucket.size) clientStreamsByOrder.delete(orderId);
+  });
 });
 
 app.post("/api/uploads/presign", async (req, res) => {
@@ -158,7 +346,12 @@ app.post("/api/uploads/presign", async (req, res) => {
 });
 
 app.get("/", (_req, res) => res.sendFile(path.join(__dirname, "public", "index.html")));
-app.get("/admin", (_req, res) => res.sendFile(path.join(__dirname, "public", "admin.html")));
+app.get("/admin-login", (_req, res) => res.sendFile(path.join(__dirname, "public", "admin-login.html")));
+app.get("/admin", (req, res) => {
+  const admin = authFromRequest(req);
+  if (!admin) return res.redirect("/admin-login");
+  return res.sendFile(path.join(__dirname, "public", "admin.html"));
+});
 
 app.listen(port, () => {
   console.log(`Hush app running on http://localhost:${port}`);

@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Hush | Admin Login</title>
+  <link rel="stylesheet" href="/css/styles.css" />
+</head>
+<body>
+  <div class="container" style="max-width:680px;padding-top:2rem;">
+    <div class="topbar">
+      <div class="brand">HUSH ADMIN</div>
+      <a href="/">Back To Store</a>
+    </div>
+    <section class="panel">
+      <h3 id="loginTitle">Admin Sign In</h3>
+      <p class="muted" id="loginDesc">Use your admin email and password.</p>
+      <form id="authForm">
+        <label id="fullNameWrap" style="display:none;">Full Name <input id="fullName" /></label>
+        <label>Email <input id="email" type="email" required /></label>
+        <label>Password <input id="password" type="password" required /></label>
+        <button type="submit" id="submitBtn">Sign In</button>
+      </form>
+      <p id="authStatus" class="muted"></p>
+    </section>
+  </div>
+  <script src="/js/admin-login.js"></script>
+</body>
+</html>

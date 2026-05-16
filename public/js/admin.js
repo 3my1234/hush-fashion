@@ -1,10 +1,31 @@
 const ordersEl = document.getElementById("orders");
 const threadEl = document.getElementById("thread");
 const adminStatus = document.getElementById("adminStatus");
+const createAdminStatus = document.getElementById("createAdminStatus");
+const resetPasswordStatus = document.getElementById("resetPasswordStatus");
+const liveAdminNotice = document.getElementById("liveAdminNotice");
 let currentOrderId = null;
+let currentAdmin = null;
+
+async function ensureAdminSession() {
+  const res = await fetch("/api/admin/me");
+  if (!res.ok) {
+    window.location.href = "/admin-login";
+    return false;
+  }
+  const data = await res.json();
+  currentAdmin = data.admin;
+  document.getElementById("adminIdentity").textContent = currentAdmin.email;
+  document.getElementById("adminName").value = currentAdmin.full_name || "Hush Admin";
+  return true;
+}
 
 async function loadOrders() {
   const res = await fetch("/api/orders");
+  if (res.status === 401) {
+    window.location.href = "/admin-login";
+    return;
+  }
   const orders = await res.json();
   ordersEl.innerHTML = "";
 
@@ -70,7 +91,7 @@ document.getElementById("adminMessageForm").addEventListener("submit", async (e)
   }
   const payload = {
     sender_role: "admin",
-    sender_name: document.getElementById("adminName").value,
+    sender_name: currentAdmin?.full_name || document.getElementById("adminName").value,
     body: document.getElementById("adminBody").value,
     attachment_url: document.getElementById("adminAttachmentUrl").value,
     attachment_name: document.getElementById("adminAttachmentName").value
@@ -89,4 +110,64 @@ document.getElementById("adminMessageForm").addEventListener("submit", async (e)
   await loadThread(currentOrderId);
 });
 
-loadOrders();
+document.getElementById("logoutBtn").addEventListener("click", async () => {
+  await fetch("/api/admin/logout", { method: "POST" });
+  window.location.href = "/admin-login";
+});
+
+document.getElementById("createAdminForm").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  createAdminStatus.textContent = "";
+  const payload = {
+    full_name: document.getElementById("newAdminName").value,
+    email: document.getElementById("newAdminEmail").value,
+    password: document.getElementById("newAdminPassword").value
+  };
+  const res = await fetch("/api/admin/users", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload)
+  });
+  const body = await res.json();
+  createAdminStatus.textContent = res.ok ? `Admin created: ${body.email}` : body.error || "Failed to create admin.";
+});
+
+document.getElementById("resetPasswordForm").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  resetPasswordStatus.textContent = "";
+  const payload = {
+    currentPassword: document.getElementById("currentPassword").value,
+    newPassword: document.getElementById("newPassword").value
+  };
+  const res = await fetch("/api/admin/reset-password", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload)
+  });
+  const body = await res.json();
+  resetPasswordStatus.textContent = res.ok ? "Password reset successful." : body.error || "Failed to reset password.";
+});
+
+function startAdminNotifications() {
+  const es = new EventSource("/api/stream/admin");
+  es.onmessage = async (event) => {
+    const data = JSON.parse(event.data);
+    if (data.type === "new-order") {
+      liveAdminNotice.textContent = `New order #${data.orderId} from ${data.clientName}`;
+      await loadOrders();
+    }
+    if (data.type === "new-client-message") {
+      liveAdminNotice.textContent = `New client message on order #${data.orderId}`;
+      if (currentOrderId === data.orderId) await loadThread(currentOrderId);
+    }
+  };
+}
+
+async function init() {
+  const ok = await ensureAdminSession();
+  if (!ok) return;
+  await loadOrders();
+  startAdminNotifications();
+}
+
+init();
