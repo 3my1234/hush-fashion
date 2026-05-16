@@ -62,6 +62,21 @@ async function initDb() {
       created_by INTEGER REFERENCES admins(id),
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
+
+    CREATE TABLE IF NOT EXISTS users (
+      id SERIAL PRIMARY KEY,
+      email TEXT NOT NULL UNIQUE,
+      password_hash TEXT NOT NULL,
+      full_name TEXT NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+  `);
+
+  await query(`
+    ALTER TABLE orders ADD COLUMN IF NOT EXISTS user_id INTEGER REFERENCES users(id);
+    ALTER TABLE orders ADD COLUMN IF NOT EXISTS product_name_snapshot TEXT;
+    ALTER TABLE orders ADD COLUMN IF NOT EXISTS product_image_snapshot TEXT;
+    ALTER TABLE orders ADD COLUMN IF NOT EXISTS product_price_snapshot NUMERIC(12,2);
   `);
 
   const countRes = await query("SELECT COUNT(*)::int AS count FROM products");

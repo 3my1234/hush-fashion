@@ -17,9 +17,18 @@ app.use(cookieParser());
 app.use(express.static(path.join(__dirname, "public")));
 
 const JWT_SECRET = process.env.JWT_SECRET || "change-this-in-production";
-const COOKIE_NAME = "hush_admin_session";
+const ADMIN_COOKIE = "hush_admin_session";
+const USER_COOKIE = "hush_user_session";
 const adminStreams = new Set();
 const clientStreamsByOrder = new Map();
+
+function setSessionCookie(res, name, token) {
+  res.cookie(name, token, {
+    httpOnly: true,
+    sameSite: "lax",
+    secure: process.env.NODE_ENV === "production"
+  });
+}
 
 function emitAdminEvent(payload) {
   const data = `data: ${JSON.stringify(payload)}\n\n`;
@@ -33,9 +42,9 @@ function emitClientEvent(orderId, payload) {
   for (const res of streamSet) res.write(data);
 }
 
-function authFromRequest(req) {
+function authFromCookie(req, name) {
   try {
-    const token = req.cookies[COOKIE_NAME];
+    const token = req.cookies[name];
     if (!token) return null;
     return jwt.verify(token, JWT_SECRET);
   } catch {
@@ -44,13 +53,71 @@ function authFromRequest(req) {
 }
 
 function requireAdmin(req, res, next) {
-  const user = authFromRequest(req);
-  if (!user) return res.status(401).json({ error: "Unauthorized" });
-  req.admin = user;
+  const admin = authFromCookie(req, ADMIN_COOKIE);
+  if (!admin) return res.status(401).json({ error: "Unauthorized" });
+  req.admin = admin;
+  next();
+}
+
+function requireUser(req, res, next) {
+  const user = authFromCookie(req, USER_COOKIE);
+  if (!user) return res.status(401).json({ error: "Please sign in." });
+  req.user = user;
   next();
 }
 
 app.get("/health", (_req, res) => res.json({ ok: true }));
+
+app.post("/api/users/signup", async (req, res) => {
+  const { email, password, full_name } = req.body;
+  if (!email || !password || !full_name) {
+    return res.status(400).json({ error: "full_name, email and password are required." });
+  }
+  if (String(password).length < 8) return res.status(400).json({ error: "Password must be at least 8 characters." });
+  const passwordHash = bcrypt.hashSync(password, 12);
+  try {
+    const result = await query(
+      `INSERT INTO users(email, password_hash, full_name)
+       VALUES ($1, $2, $3) RETURNING id, email, full_name`,
+      [String(email).trim().toLowerCase(), passwordHash, String(full_name).trim()]
+    );
+    const user = result.rows[0];
+    const token = jwt.sign(user, JWT_SECRET, { expiresIn: "7d" });
+    setSessionCookie(res, USER_COOKIE, token);
+    res.status(201).json({ user });
+  } catch (error) {
+    if (String(error.message).toLowerCase().includes("unique")) {
+      return res.status(409).json({ error: "Email already exists." });
+    }
+    return res.status(500).json({ error: "Unable to create account." });
+  }
+});
+
+app.post("/api/users/login", async (req, res) => {
+  const { email, password } = req.body;
+  if (!email || !password) return res.status(400).json({ error: "email and password are required." });
+  const found = await query("SELECT id, email, full_name, password_hash FROM users WHERE email = $1", [
+    String(email).trim().toLowerCase()
+  ]);
+  const user = found.rows[0];
+  if (!user || !bcrypt.compareSync(password, user.password_hash)) {
+    return res.status(401).json({ error: "Invalid credentials." });
+  }
+  const token = jwt.sign({ id: user.id, email: user.email, full_name: user.full_name }, JWT_SECRET, { expiresIn: "7d" });
+  setSessionCookie(res, USER_COOKIE, token);
+  res.json({ user: { id: user.id, email: user.email, full_name: user.full_name } });
+});
+
+app.post("/api/users/logout", (_req, res) => {
+  res.clearCookie(USER_COOKIE);
+  res.json({ ok: true });
+});
+
+app.get("/api/users/me", (req, res) => {
+  const user = authFromCookie(req, USER_COOKIE);
+  if (!user) return res.status(401).json({ error: "No active session." });
+  res.json({ user });
+});
 
 app.get("/api/admin/bootstrap-status", async (_req, res) => {
   const result = await query("SELECT COUNT(*)::int AS c FROM admins");
@@ -74,7 +141,7 @@ app.post("/api/admin/bootstrap", async (req, res) => {
   );
   const admin = insert.rows[0];
   const token = jwt.sign(admin, JWT_SECRET, { expiresIn: "7d" });
-  res.cookie(COOKIE_NAME, token, { httpOnly: true, sameSite: "lax", secure: process.env.NODE_ENV === "production" });
+  setSessionCookie(res, ADMIN_COOKIE, token);
   res.status(201).json({ admin });
 });
 
@@ -94,12 +161,12 @@ app.post("/api/admin/login", async (req, res) => {
     JWT_SECRET,
     { expiresIn: "7d" }
   );
-  res.cookie(COOKIE_NAME, token, { httpOnly: true, sameSite: "lax", secure: process.env.NODE_ENV === "production" });
+  setSessionCookie(res, ADMIN_COOKIE, token);
   res.json({ admin: { id: admin.id, email: admin.email, full_name: admin.full_name } });
 });
 
 app.post("/api/admin/logout", (_req, res) => {
-  res.clearCookie(COOKIE_NAME);
+  res.clearCookie(ADMIN_COOKIE);
   res.json({ ok: true });
 });
 
@@ -181,43 +248,68 @@ app.get("/api/orders", requireAdmin, async (_req, res) => {
   res.json(rows.rows);
 });
 
-app.post("/api/orders", async (req, res) => {
+app.post("/api/orders", requireUser, async (req, res) => {
   const {
     product_id,
-    client_name,
-    email,
     phone,
     address,
     selected_size,
     selected_color,
     quantity,
-    note
+    note,
+    initial_message,
+    attachment_url,
+    attachment_name
   } = req.body;
-  if (!product_id || !client_name || !email || !phone || !address || !selected_size || !selected_color) {
-    return res.status(400).json({ error: "Missing required fields" });
+  if (!product_id || !phone || !address || !selected_size || !selected_color) {
+    return res.status(400).json({ error: "Missing required order fields." });
   }
-  const product = await query("SELECT id FROM products WHERE id = $1", [product_id]);
-  if (!product.rows[0]) return res.status(404).json({ error: "Product not found" });
+  const productRes = await query("SELECT id, name, image_url, price FROM products WHERE id = $1", [product_id]);
+  const product = productRes.rows[0];
+  if (!product) return res.status(404).json({ error: "Product not found" });
 
-  const inserted = await query(
-    `INSERT INTO orders (
-      product_id, client_name, email, phone, address, selected_size, selected_color, quantity, note
-    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING id`,
-    [
-      product_id,
-      client_name.trim(),
-      email.trim(),
-      phone.trim(),
-      address.trim(),
-      selected_size.trim(),
-      selected_color.trim(),
-      Number(quantity) || 1,
-      (note || "").trim()
-    ]
-  );
-  const orderId = Number(inserted.rows[0].id);
-  emitAdminEvent({ type: "new-order", orderId, clientName: client_name });
-  res.status(201).json({ id: orderId });
+  try {
+    const inserted = await query(
+      `INSERT INTO orders (
+        product_id, user_id, client_name, email, phone, address, selected_size, selected_color, quantity, note,
+        product_name_snapshot, product_image_snapshot, product_price_snapshot
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+      RETURNING id`,
+      [
+        product_id,
+        req.user.id,
+        req.user.full_name,
+        req.user.email,
+        phone.trim(),
+        address.trim(),
+        selected_size.trim(),
+        selected_color.trim(),
+        Number(quantity) || 1,
+        (note || "").trim(),
+        product.name,
+        product.image_url,
+        product.price
+      ]
+    );
+    const orderId = Number(inserted.rows[0].id);
+    if ((initial_message || "").trim()) {
+      await query(
+        `INSERT INTO messages (order_id, sender_role, sender_name, body, attachment_url, attachment_name)
+         VALUES($1, 'client', $2, $3, $4, $5)`,
+        [
+          orderId,
+          req.user.full_name,
+          initial_message.trim(),
+          (attachment_url || "").trim() || null,
+          (attachment_name || "").trim() || null
+        ]
+      );
+    }
+    emitAdminEvent({ type: "new-order", orderId, clientName: req.user.full_name });
+    res.status(201).json({ id: orderId });
+  } catch (_error) {
+    res.status(500).json({ error: "Unable to place order." });
+  }
 });
 
 app.patch("/api/orders/:orderId/status", requireAdmin, async (req, res) => {
@@ -233,8 +325,13 @@ app.patch("/api/orders/:orderId/status", requireAdmin, async (req, res) => {
 
 app.get("/api/orders/:orderId/messages", async (req, res) => {
   const orderId = Number(req.params.orderId);
-  const order = await query("SELECT id FROM orders WHERE id = $1", [orderId]);
+  const admin = authFromCookie(req, ADMIN_COOKIE);
+  const user = authFromCookie(req, USER_COOKIE);
+  const order = await query("SELECT id, user_id FROM orders WHERE id = $1", [orderId]);
   if (!order.rows[0]) return res.status(404).json({ error: "Order not found" });
+  if (!admin && (!user || Number(order.rows[0].user_id) !== Number(user.id))) {
+    return res.status(403).json({ error: "Forbidden." });
+  }
 
   const rows = await query("SELECT * FROM messages WHERE order_id = $1 ORDER BY id ASC", [orderId]);
   const messages = await Promise.all(
@@ -251,24 +348,28 @@ app.get("/api/orders/:orderId/messages", async (req, res) => {
 
 app.post("/api/orders/:orderId/messages", async (req, res) => {
   const orderId = Number(req.params.orderId);
-  const authAdmin = authFromRequest(req);
+  const admin = authFromCookie(req, ADMIN_COOKIE);
+  const user = authFromCookie(req, USER_COOKIE);
   let { sender_role, sender_name, body, attachment_url, attachment_name } = req.body;
-  if (!sender_name || !body) {
-    return res.status(400).json({ error: "Missing required message fields" });
-  }
-  if (sender_role === "admin") {
-    if (!authAdmin) return res.status(401).json({ error: "Unauthorized admin sender." });
-    sender_name = authAdmin.full_name;
-  } else {
-    sender_role = "client";
-  }
-  const order = await query("SELECT id FROM orders WHERE id = $1", [orderId]);
+  if (!body) return res.status(400).json({ error: "Message body is required." });
+
+  const order = await query("SELECT id, user_id FROM orders WHERE id = $1", [orderId]);
   if (!order.rows[0]) return res.status(404).json({ error: "Order not found" });
 
+  if (sender_role === "admin") {
+    if (!admin) return res.status(401).json({ error: "Unauthorized admin sender." });
+    sender_name = admin.full_name;
+  } else {
+    sender_role = "client";
+    if (!user || Number(order.rows[0].user_id) !== Number(user.id)) {
+      return res.status(403).json({ error: "Forbidden." });
+    }
+    sender_name = user.full_name;
+  }
+
   const inserted = await query(
-    `INSERT INTO messages (
-      order_id, sender_role, sender_name, body, attachment_url, attachment_name
-    ) VALUES ($1, $2, $3, $4, $5, $6) RETURNING id`,
+    `INSERT INTO messages (order_id, sender_role, sender_name, body, attachment_url, attachment_name)
+     VALUES ($1, $2, $3, $4, $5, $6) RETURNING id`,
     [
       orderId,
       sender_role,
@@ -296,9 +397,13 @@ app.get("/api/stream/admin", requireAdmin, (req, res) => {
   req.on("close", () => adminStreams.delete(res));
 });
 
-app.get("/api/stream/client", (req, res) => {
+app.get("/api/stream/client", requireUser, async (req, res) => {
   const orderId = Number(req.query.orderId);
   if (!orderId) return res.status(400).json({ error: "orderId is required" });
+  const order = await query("SELECT id, user_id FROM orders WHERE id = $1", [orderId]);
+  if (!order.rows[0] || Number(order.rows[0].user_id) !== Number(req.user.id)) {
+    return res.status(403).json({ error: "Forbidden." });
+  }
   res.setHeader("Content-Type", "text/event-stream");
   res.setHeader("Cache-Control", "no-cache");
   res.setHeader("Connection", "keep-alive");
@@ -335,7 +440,7 @@ app.post("/api/uploads/presign", async (req, res) => {
 app.get("/", (_req, res) => res.sendFile(path.join(__dirname, "public", "index.html")));
 app.get("/admin-login", (_req, res) => res.sendFile(path.join(__dirname, "public", "admin-login.html")));
 app.get("/admin", (req, res) => {
-  const admin = authFromRequest(req);
+  const admin = authFromCookie(req, ADMIN_COOKIE);
   if (!admin) return res.redirect("/admin-login");
   return res.sendFile(path.join(__dirname, "public", "admin.html"));
 });

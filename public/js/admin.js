@@ -30,16 +30,18 @@ async function loadOrders() {
   ordersEl.innerHTML = "";
 
   for (const o of orders) {
+    const productName = o.product_name_snapshot || o.product_name;
+    const productImage = o.product_image_snapshot || o.product_image;
     const item = document.createElement("div");
     item.className = "order-item";
     item.innerHTML = `
-      <strong>#${o.id} - ${o.product_name}</strong>
+      <strong>#${o.id} - ${productName}</strong>
       <div class="muted">${o.client_name} | ${o.phone}</div>
       <div class="muted">${o.email}</div>
       <div class="muted">${o.address}</div>
       <div class="muted">Size: ${o.selected_size} | Color: ${o.selected_color} | Qty: ${o.quantity}</div>
       <div class="muted">Status: ${o.status}</div>
-      <img src="${o.product_image}" alt="${o.product_name}" style="width:70px;height:70px;object-fit:cover;border-radius:8px;margin-top:6px;" />
+      <img src="${productImage}" alt="${productName}" style="width:70px;height:70px;object-fit:cover;border-radius:8px;margin-top:6px;" />
       <div style="display:flex;gap:.4rem;margin-top:.5rem;">
         <button data-open="${o.id}">Open</button>
         <select data-status="${o.id}">

@@ -10,11 +10,12 @@
   <div class="container">
     <div class="topbar">
       <div class="brand">HUSH</div>
-      <span class="muted">Official Store</span>
+      <div id="userBar" class="muted"></div>
     </div>
+
     <section class="hero">
       <h1>Modern Fashion For Him & Her</h1>
-      <p>Browse premium Hush collections and place your order with delivery details.</p>
+      <p>Sign in, pick an outfit, place order, and send your message in one flow.</p>
       <div class="filters">
         <button class="ghost" data-filter="all">All</button>
         <button class="ghost" data-filter="male">Male Wears</button>
@@ -22,19 +23,32 @@
       </div>
     </section>
 
+    <section id="authPanel" class="panel" style="margin-bottom:1rem;">
+      <h3 id="authTitle">User Sign In</h3>
+      <p class="muted" id="authHint">Create account if you are new.</p>
+      <form id="authForm">
+        <label id="signupNameWrap" style="display:none;">Full Name <input id="signupName" /></label>
+        <label>Email <input id="authEmail" type="email" required /></label>
+        <label>Password <input id="authPassword" type="password" required minlength="8" /></label>
+        <div style="display:flex;gap:.5rem;margin-top:.7rem;">
+          <button type="submit" id="authSubmitBtn">Sign In</button>
+          <button class="ghost" id="authToggleBtn" type="button">Switch to Sign Up</button>
+        </div>
+      </form>
+      <p id="authStatus" class="muted"></p>
+    </section>
+
     <div class="layout">
       <section>
         <div id="products" class="grid"></div>
       </section>
       <section class="panel">
-        <h3>Place Order</h3>
-        <p class="muted">Select an outfit first, then fill your details.</p>
+        <h3>Order + Message</h3>
+        <p class="muted">This creates your order and sends your first message to admin.</p>
         <form id="orderForm">
           <label>Selected Outfit
             <input id="selectedProduct" placeholder="Click 'Order This' on a product" readonly required />
           </label>
-          <label>Full Name <input id="clientName" required /></label>
-          <label>Email <input id="email" type="email" required /></label>
           <label>Phone Number <input id="phone" required /></label>
           <label>House Address <textarea id="address" required></textarea></label>
           <div class="row">
@@ -43,32 +57,16 @@
           </div>
           <div class="row">
             <label>Quantity <input id="quantity" type="number" value="1" min="1" /></label>
-            <label>Note <input id="note" placeholder="Optional note" /></label>
+            <label>Order Note <input id="note" placeholder="Optional note" /></label>
           </div>
-          <button type="submit">Submit Order</button>
+          <label>Message To Admin <textarea id="initialMessage" placeholder="Optional message"></textarea></label>
+          <label>Attach Image (optional) <input id="attachmentFile" type="file" accept="image/*" /></label>
+          <button type="submit">Place Order</button>
         </form>
         <p id="formStatus" class="muted"></p>
+        <p id="liveClientNotice" class="muted"></p>
       </section>
     </div>
-
-    <section class="panel" style="margin-top:1rem;">
-      <h3>Order Message Exchange</h3>
-      <p class="muted">Client can send a follow-up message with optional image link after order placement.</p>
-      <form id="messageForm">
-        <div class="row">
-          <label>Order ID <input id="msgOrderId" type="number" required /></label>
-          <label>Your Name <input id="msgName" required /></label>
-        </div>
-        <label>Message <textarea id="msgBody" required></textarea></label>
-        <label>Attachment URL (optional)
-          <input id="msgAttachmentUrl" placeholder="https://... or s3://key" />
-        </label>
-        <label>Attachment Name (optional) <input id="msgAttachmentName" /></label>
-        <button type="submit">Send Message</button>
-      </form>
-      <p id="msgStatus" class="muted"></p>
-      <p id="liveClientNotice" class="muted"></p>
-    </section>
   </div>
   <script src="/js/client.js"></script>
 </body>

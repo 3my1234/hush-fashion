@@ -1,11 +1,14 @@
 let selectedProduct = null;
+let currentUser = null;
+let stream = null;
+let signupMode = false;
 
 const productsEl = document.getElementById("products");
 const selectedProductEl = document.getElementById("selectedProduct");
 const formStatus = document.getElementById("formStatus");
-const msgStatus = document.getElementById("msgStatus");
 const liveClientNotice = document.getElementById("liveClientNotice");
-let stream = null;
+const authStatus = document.getElementById("authStatus");
+const userBar = document.getElementById("userBar");
 
 async function loadProducts(category = "all") {
   const q = category === "all" ? "" : `?category=${category}`;
@@ -37,69 +40,61 @@ async function loadProducts(category = "all") {
   }
 }
 
-document.querySelectorAll("[data-filter]").forEach((btn) => {
-  btn.addEventListener("click", () => loadProducts(btn.dataset.filter));
-});
-
-document.getElementById("orderForm").addEventListener("submit", async (e) => {
-  e.preventDefault();
-  formStatus.textContent = "";
-  if (!selectedProduct) {
-    formStatus.textContent = "Please select an outfit first.";
+function renderUserBar() {
+  if (!currentUser) {
+    userBar.textContent = "Not signed in";
     return;
   }
+  userBar.innerHTML = `${currentUser.full_name} (${currentUser.email}) <button id="logoutUserBtn" class="ghost" style="margin-left:.4rem;">Logout</button>`;
+  document.getElementById("logoutUserBtn").addEventListener("click", logoutUser);
+}
 
-  const payload = {
-    product_id: selectedProduct.id,
-    client_name: document.getElementById("clientName").value,
-    email: document.getElementById("email").value,
-    phone: document.getElementById("phone").value,
-    address: document.getElementById("address").value,
-    selected_size: document.getElementById("size").value,
-    selected_color: document.getElementById("color").value,
-    quantity: Number(document.getElementById("quantity").value || 1),
-    note: document.getElementById("note").value
-  };
+function setAuthMode(isSignup) {
+  signupMode = isSignup;
+  document.getElementById("signupNameWrap").style.display = isSignup ? "block" : "none";
+  document.getElementById("authTitle").textContent = isSignup ? "User Sign Up" : "User Sign In";
+  document.getElementById("authHint").textContent = isSignup
+    ? "Create your account with email/password."
+    : "Use your existing account.";
+  document.getElementById("authSubmitBtn").textContent = isSignup ? "Sign Up" : "Sign In";
+  document.getElementById("authToggleBtn").textContent = isSignup ? "Switch to Sign In" : "Switch to Sign Up";
+}
 
-  const res = await fetch("/api/orders", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload)
-  });
-  const body = await res.json();
+async function ensureUserSession() {
+  const res = await fetch("/api/users/me");
   if (!res.ok) {
-    formStatus.textContent = body.error || "Unable to place order.";
+    currentUser = null;
+    renderUserBar();
     return;
   }
-  formStatus.textContent = `Order placed successfully. Your order ID is ${body.id}.`;
-  document.getElementById("msgOrderId").value = body.id;
-  startClientNotifications(body.id);
-});
+  const data = await res.json();
+  currentUser = data.user;
+  renderUserBar();
+}
 
-document.getElementById("messageForm").addEventListener("submit", async (e) => {
-  e.preventDefault();
-  msgStatus.textContent = "";
-  const orderId = document.getElementById("msgOrderId").value;
-  const payload = {
-    sender_role: "client",
-    sender_name: document.getElementById("msgName").value,
-    body: document.getElementById("msgBody").value,
-    attachment_url: document.getElementById("msgAttachmentUrl").value,
-    attachment_name: document.getElementById("msgAttachmentName").value
-  };
-  const res = await fetch(`/api/orders/${orderId}/messages`, {
+async function logoutUser() {
+  await fetch("/api/users/logout", { method: "POST" });
+  currentUser = null;
+  renderUserBar();
+}
+
+async function uploadAttachment(file) {
+  if (!file) return { attachment_url: "", attachment_name: "" };
+  const presign = await fetch("/api/uploads/presign", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload)
+    body: JSON.stringify({ fileName: file.name, contentType: file.type || "application/octet-stream" })
   });
-  const body = await res.json();
-  msgStatus.textContent = res.ok ? "Message sent to admin." : body.error || "Failed to send message.";
-});
-
-document.getElementById("msgOrderId").addEventListener("change", (e) => {
-  const id = Number(e.target.value);
-  if (id) startClientNotifications(id);
-});
+  const signed = await presign.json();
+  if (!presign.ok) throw new Error(signed.error || "Could not prepare file upload.");
+  const upload = await fetch(signed.uploadUrl, {
+    method: "PUT",
+    headers: { "Content-Type": file.type || "application/octet-stream" },
+    body: file
+  });
+  if (!upload.ok) throw new Error("File upload failed.");
+  return { attachment_url: signed.persistentUrl, attachment_name: file.name };
+}
 
 function startClientNotifications(orderId) {
   if (!orderId) return;
@@ -113,4 +108,87 @@ function startClientNotifications(orderId) {
   };
 }
 
+document.querySelectorAll("[data-filter]").forEach((btn) => {
+  btn.addEventListener("click", () => loadProducts(btn.dataset.filter));
+});
+
+document.getElementById("authToggleBtn").addEventListener("click", () => {
+  authStatus.textContent = "";
+  setAuthMode(!signupMode);
+});
+
+document.getElementById("authForm").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  authStatus.textContent = "";
+  const payload = {
+    email: document.getElementById("authEmail").value,
+    password: document.getElementById("authPassword").value
+  };
+  let endpoint = "/api/users/login";
+  if (signupMode) {
+    payload.full_name = document.getElementById("signupName").value;
+    endpoint = "/api/users/signup";
+  }
+  const res = await fetch(endpoint, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload)
+  });
+  const body = await res.json();
+  if (!res.ok) {
+    authStatus.textContent = body.error || "Authentication failed.";
+    return;
+  }
+  currentUser = body.user;
+  authStatus.textContent = signupMode ? "Account created and signed in." : "Signed in.";
+  renderUserBar();
+});
+
+document.getElementById("orderForm").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  formStatus.textContent = "";
+  if (!currentUser) {
+    formStatus.textContent = "Please sign in first.";
+    return;
+  }
+  if (!selectedProduct) {
+    formStatus.textContent = "Please select an outfit first.";
+    return;
+  }
+
+  try {
+    const file = document.getElementById("attachmentFile").files[0];
+    const uploaded = await uploadAttachment(file);
+    const payload = {
+      product_id: selectedProduct.id,
+      phone: document.getElementById("phone").value,
+      address: document.getElementById("address").value,
+      selected_size: document.getElementById("size").value,
+      selected_color: document.getElementById("color").value,
+      quantity: Number(document.getElementById("quantity").value || 1),
+      note: document.getElementById("note").value,
+      initial_message: document.getElementById("initialMessage").value,
+      attachment_url: uploaded.attachment_url,
+      attachment_name: uploaded.attachment_name
+    };
+
+    const res = await fetch("/api/orders", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload)
+    });
+    const body = await res.json();
+    if (!res.ok) {
+      formStatus.textContent = body.error || "Unable to place order.";
+      return;
+    }
+    formStatus.textContent = `Order #${body.id} placed successfully.`;
+    startClientNotifications(body.id);
+  } catch (error) {
+    formStatus.textContent = error.message || "Unable to place order.";
+  }
+});
+
+setAuthMode(false);
+ensureUserSession();
 loadProducts();
