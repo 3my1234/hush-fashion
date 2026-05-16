@@ -18,7 +18,7 @@ async function ensureAdminSession() {
   const data = await res.json();
   currentAdmin = data.admin;
   document.getElementById("adminIdentity").textContent = currentAdmin.email;
-  document.getElementById("adminName").value = currentAdmin.full_name || "Hush Admin";
+  document.getElementById("adminName").value = currentAdmin.full_name || "Winnie's Stitches Admin";
   return true;
 }
 
@@ -43,7 +43,7 @@ async function loadOrders() {
       <div class="muted">${o.address}</div>
       <div class="muted">Size: ${o.selected_size} | Color: ${o.selected_color} | Qty: ${o.quantity}</div>
       <div class="muted">Status: ${o.status}</div>
-      <img src="${productImage}" alt="${productName}" style="width:70px;height:70px;object-fit:cover;border-radius:8px;margin-top:6px;" />
+      <img src="${productImage}" alt="${productName}" style="width:70px;height:70px;object-fit:contain;background:#f3ece4;border-radius:8px;margin-top:6px;" />
       <div style="display:flex;gap:.4rem;margin-top:.5rem;">
         <button data-open="${o.id}">Open</button>
         <select data-status="${o.id}">
@@ -137,7 +137,7 @@ async function loadProductsForAdmin() {
       <strong>#${p.id} - ${p.name}</strong>
       <div class="muted">${p.category} | NGN ${Number(p.price).toLocaleString()}</div>
       <div class="muted">Color: ${p.color} | Sizes: ${p.size_options.join(", ")}</div>
-      <img src="${p.image_url}" alt="${p.name}" style="width:70px;height:70px;object-fit:cover;border-radius:8px;margin-top:6px;" />
+      <img src="${p.image_url}" alt="${p.name}" style="width:70px;height:70px;object-fit:contain;background:#f3ece4;border-radius:8px;margin-top:6px;" />
       <div style="display:flex;gap:.4rem;margin-top:.5rem;">
         <button data-edit="${p.id}">Edit</button>
         <button class="ghost" data-delete="${p.id}">Delete</button>
