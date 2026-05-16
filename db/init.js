@@ -1,69 +1,72 @@
-const Database = require("better-sqlite3");
-const path = require("path");
+const { Pool } = require("pg");
 
-const dbPath = path.join(__dirname, "hush.db");
-const db = new Database(dbPath);
+const connectionString = process.env.DATABASE_URL;
+if (!connectionString) {
+  throw new Error("DATABASE_URL is required for PostgreSQL connection.");
+}
 
-db.pragma("journal_mode = WAL");
+const pool = new Pool({
+  connectionString,
+  ssl: process.env.PG_SSL === "true" ? { rejectUnauthorized: false } : false
+});
 
-db.exec(`
-CREATE TABLE IF NOT EXISTS products (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  name TEXT NOT NULL,
-  category TEXT NOT NULL CHECK(category IN ('male', 'female')),
-  price REAL NOT NULL,
-  color TEXT NOT NULL,
-  size_options TEXT NOT NULL,
-  image_url TEXT NOT NULL,
-  description TEXT DEFAULT '',
-  created_at TEXT NOT NULL DEFAULT (datetime('now'))
-);
+async function query(text, params = []) {
+  return pool.query(text, params);
+}
 
-CREATE TABLE IF NOT EXISTS orders (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  product_id INTEGER NOT NULL,
-  client_name TEXT NOT NULL,
-  email TEXT NOT NULL,
-  phone TEXT NOT NULL,
-  address TEXT NOT NULL,
-  selected_size TEXT NOT NULL,
-  selected_color TEXT NOT NULL,
-  quantity INTEGER NOT NULL DEFAULT 1,
-  note TEXT DEFAULT '',
-  status TEXT NOT NULL DEFAULT 'new',
-  created_at TEXT NOT NULL DEFAULT (datetime('now')),
-  FOREIGN KEY (product_id) REFERENCES products(id)
-);
+async function initDb() {
+  await query(`
+    CREATE TABLE IF NOT EXISTS products (
+      id SERIAL PRIMARY KEY,
+      name TEXT NOT NULL,
+      category TEXT NOT NULL CHECK(category IN ('male', 'female')),
+      price NUMERIC(12,2) NOT NULL,
+      color TEXT NOT NULL,
+      size_options TEXT NOT NULL,
+      image_url TEXT NOT NULL,
+      description TEXT DEFAULT '',
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
 
-CREATE TABLE IF NOT EXISTS messages (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  order_id INTEGER NOT NULL,
-  sender_role TEXT NOT NULL CHECK(sender_role IN ('client', 'admin')),
-  sender_name TEXT NOT NULL,
-  body TEXT NOT NULL,
-  attachment_url TEXT,
-  attachment_name TEXT,
-  created_at TEXT NOT NULL DEFAULT (datetime('now')),
-  FOREIGN KEY (order_id) REFERENCES orders(id)
-);
+    CREATE TABLE IF NOT EXISTS orders (
+      id SERIAL PRIMARY KEY,
+      product_id INTEGER NOT NULL REFERENCES products(id),
+      client_name TEXT NOT NULL,
+      email TEXT NOT NULL,
+      phone TEXT NOT NULL,
+      address TEXT NOT NULL,
+      selected_size TEXT NOT NULL,
+      selected_color TEXT NOT NULL,
+      quantity INTEGER NOT NULL DEFAULT 1,
+      note TEXT DEFAULT '',
+      status TEXT NOT NULL DEFAULT 'new',
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
 
-CREATE TABLE IF NOT EXISTS admins (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  email TEXT NOT NULL UNIQUE,
-  password_hash TEXT NOT NULL,
-  full_name TEXT NOT NULL,
-  created_by INTEGER,
-  created_at TEXT NOT NULL DEFAULT (datetime('now')),
-  FOREIGN KEY (created_by) REFERENCES admins(id)
-);
-`);
+    CREATE TABLE IF NOT EXISTS messages (
+      id SERIAL PRIMARY KEY,
+      order_id INTEGER NOT NULL REFERENCES orders(id),
+      sender_role TEXT NOT NULL CHECK(sender_role IN ('client', 'admin')),
+      sender_name TEXT NOT NULL,
+      body TEXT NOT NULL,
+      attachment_url TEXT,
+      attachment_name TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
 
-const count = db.prepare("SELECT COUNT(*) AS count FROM products").get().count;
-if (count === 0) {
-  const seed = db.prepare(`
-    INSERT INTO products(name, category, price, color, size_options, image_url, description)
-    VALUES(@name, @category, @price, @color, @size_options, @image_url, @description)
+    CREATE TABLE IF NOT EXISTS admins (
+      id SERIAL PRIMARY KEY,
+      email TEXT NOT NULL UNIQUE,
+      password_hash TEXT NOT NULL,
+      full_name TEXT NOT NULL,
+      created_by INTEGER REFERENCES admins(id),
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
   `);
+
+  const countRes = await query("SELECT COUNT(*)::int AS count FROM products");
+  if (countRes.rows[0].count > 0) return;
+
   const initial = [
     {
       name: "Hush Urban Suit",
@@ -106,10 +109,14 @@ if (count === 0) {
       description: "Bold Ankara two-piece set for standout style."
     }
   ];
-  const insertMany = db.transaction((rows) => {
-    for (const row of rows) seed.run(row);
-  });
-  insertMany(initial);
+
+  for (const row of initial) {
+    await query(
+      `INSERT INTO products(name, category, price, color, size_options, image_url, description)
+       VALUES($1, $2, $3, $4, $5, $6, $7)`,
+      [row.name, row.category, row.price, row.color, row.size_options, row.image_url, row.description]
+    );
+  }
 }
 
-module.exports = db;
+module.exports = { pool, query, initDb };

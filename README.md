@@ -47,6 +47,6 @@ Open:
 
 ## Notes
 
-- SQLite DB is created at `db/hush.db`.
-- Seed products are inserted automatically on first run.
+- PostgreSQL is required via `DATABASE_URL`.
+- Tables and seed products are created automatically on first run.
 - Replace seed product images/details from DB or by adding a product management route.
