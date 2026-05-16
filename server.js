@@ -238,6 +238,73 @@ app.get("/api/products", async (req, res) => {
   res.json(products);
 });
 
+app.post("/api/admin/products", requireAdmin, async (req, res) => {
+  const { name, category, price, color, size_options, image_url, description } = req.body;
+  if (!name || !category || !price || !color || !size_options || !image_url) {
+    return res.status(400).json({ error: "Missing required product fields." });
+  }
+  if (!["male", "female"].includes(category)) {
+    return res.status(400).json({ error: "Invalid category." });
+  }
+  const sizes = Array.isArray(size_options) ? size_options.join(",") : String(size_options);
+  const inserted = await query(
+    `INSERT INTO products(name, category, price, color, size_options, image_url, description)
+     VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *`,
+    [
+      String(name).trim(),
+      category,
+      Number(price),
+      String(color).trim(),
+      sizes,
+      String(image_url).trim(),
+      String(description || "").trim()
+    ]
+  );
+  const p = inserted.rows[0];
+  res.status(201).json({ ...p, size_options: p.size_options.split(",") });
+});
+
+app.patch("/api/admin/products/:productId", requireAdmin, async (req, res) => {
+  const productId = Number(req.params.productId);
+  const { name, category, price, color, size_options, image_url, description } = req.body;
+  if (!name || !category || !price || !color || !size_options || !image_url) {
+    return res.status(400).json({ error: "Missing required product fields." });
+  }
+  if (!["male", "female"].includes(category)) {
+    return res.status(400).json({ error: "Invalid category." });
+  }
+  const sizes = Array.isArray(size_options) ? size_options.join(",") : String(size_options);
+  const updated = await query(
+    `UPDATE products
+     SET name = $1, category = $2, price = $3, color = $4, size_options = $5, image_url = $6, description = $7
+     WHERE id = $8 RETURNING *`,
+    [
+      String(name).trim(),
+      category,
+      Number(price),
+      String(color).trim(),
+      sizes,
+      String(image_url).trim(),
+      String(description || "").trim(),
+      productId
+    ]
+  );
+  if (!updated.rowCount) return res.status(404).json({ error: "Product not found." });
+  const p = updated.rows[0];
+  res.json({ ...p, size_options: p.size_options.split(",") });
+});
+
+app.delete("/api/admin/products/:productId", requireAdmin, async (req, res) => {
+  const productId = Number(req.params.productId);
+  const inUse = await query("SELECT COUNT(*)::int AS c FROM orders WHERE product_id = $1", [productId]);
+  if (inUse.rows[0].c > 0) {
+    return res.status(400).json({ error: "Cannot delete product already used in orders." });
+  }
+  const deleted = await query("DELETE FROM products WHERE id = $1", [productId]);
+  if (!deleted.rowCount) return res.status(404).json({ error: "Product not found." });
+  res.json({ ok: true });
+});
+
 app.get("/api/orders", requireAdmin, async (_req, res) => {
   const rows = await query(
     `SELECT o.*, p.name as product_name, p.image_url as product_image, p.price as product_price

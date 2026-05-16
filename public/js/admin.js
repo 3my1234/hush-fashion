@@ -4,6 +4,8 @@ const adminStatus = document.getElementById("adminStatus");
 const createAdminStatus = document.getElementById("createAdminStatus");
 const resetPasswordStatus = document.getElementById("resetPasswordStatus");
 const liveAdminNotice = document.getElementById("liveAdminNotice");
+const productStatus = document.getElementById("productStatus");
+const productList = document.getElementById("productList");
 let currentOrderId = null;
 let currentAdmin = null;
 
@@ -84,6 +86,64 @@ async function loadThread(orderId) {
   }
 }
 
+function setProductFormMode(editing) {
+  document.getElementById("productSubmitBtn").textContent = editing ? "Save Product" : "Create Product";
+}
+
+function resetProductForm() {
+  document.getElementById("productId").value = "";
+  document.getElementById("productName").value = "";
+  document.getElementById("productCategory").value = "male";
+  document.getElementById("productPrice").value = "";
+  document.getElementById("productColor").value = "";
+  document.getElementById("productSizes").value = "";
+  document.getElementById("productImage").value = "";
+  document.getElementById("productDescription").value = "";
+  setProductFormMode(false);
+}
+
+async function loadProductsForAdmin() {
+  const res = await fetch("/api/products");
+  const products = await res.json();
+  productList.innerHTML = "";
+  for (const p of products) {
+    const item = document.createElement("div");
+    item.className = "order-item";
+    item.innerHTML = `
+      <strong>#${p.id} - ${p.name}</strong>
+      <div class="muted">${p.category} | NGN ${Number(p.price).toLocaleString()}</div>
+      <div class="muted">Color: ${p.color} | Sizes: ${p.size_options.join(", ")}</div>
+      <img src="${p.image_url}" alt="${p.name}" style="width:70px;height:70px;object-fit:cover;border-radius:8px;margin-top:6px;" />
+      <div style="display:flex;gap:.4rem;margin-top:.5rem;">
+        <button data-edit="${p.id}">Edit</button>
+        <button class="ghost" data-delete="${p.id}">Delete</button>
+      </div>
+    `;
+    item.querySelector("[data-edit]").addEventListener("click", () => {
+      document.getElementById("productId").value = p.id;
+      document.getElementById("productName").value = p.name;
+      document.getElementById("productCategory").value = p.category;
+      document.getElementById("productPrice").value = p.price;
+      document.getElementById("productColor").value = p.color;
+      document.getElementById("productSizes").value = p.size_options.join(",");
+      document.getElementById("productImage").value = p.image_url;
+      document.getElementById("productDescription").value = p.description || "";
+      setProductFormMode(true);
+      window.scrollTo({ top: document.body.scrollHeight, behavior: "smooth" });
+    });
+    item.querySelector("[data-delete]").addEventListener("click", async () => {
+      productStatus.textContent = "";
+      const ok = window.confirm(`Delete product "${p.name}"?`);
+      if (!ok) return;
+      const del = await fetch(`/api/admin/products/${p.id}`, { method: "DELETE" });
+      const body = await del.json();
+      productStatus.textContent = del.ok ? "Product deleted." : body.error || "Delete failed.";
+      await loadProductsForAdmin();
+    });
+    productList.appendChild(item);
+  }
+}
+
 document.getElementById("adminMessageForm").addEventListener("submit", async (e) => {
   e.preventDefault();
   adminStatus.textContent = "";
@@ -150,6 +210,44 @@ document.getElementById("resetPasswordForm").addEventListener("submit", async (e
   resetPasswordStatus.textContent = res.ok ? "Password reset successful." : body.error || "Failed to reset password.";
 });
 
+document.getElementById("productForm").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  productStatus.textContent = "";
+  const productId = document.getElementById("productId").value;
+  const payload = {
+    name: document.getElementById("productName").value,
+    category: document.getElementById("productCategory").value,
+    price: Number(document.getElementById("productPrice").value),
+    color: document.getElementById("productColor").value,
+    size_options: document.getElementById("productSizes").value
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean),
+    image_url: document.getElementById("productImage").value,
+    description: document.getElementById("productDescription").value
+  };
+  const endpoint = productId ? `/api/admin/products/${productId}` : "/api/admin/products";
+  const method = productId ? "PATCH" : "POST";
+  const res = await fetch(endpoint, {
+    method,
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload)
+  });
+  const body = await res.json();
+  if (!res.ok) {
+    productStatus.textContent = body.error || "Unable to save product.";
+    return;
+  }
+  productStatus.textContent = productId ? "Product updated." : "Product created.";
+  resetProductForm();
+  await loadProductsForAdmin();
+});
+
+document.getElementById("productCancelEditBtn").addEventListener("click", () => {
+  resetProductForm();
+  productStatus.textContent = "";
+});
+
 function startAdminNotifications() {
   const es = new EventSource("/api/stream/admin");
   es.onmessage = async (event) => {
@@ -169,6 +267,8 @@ async function init() {
   const ok = await ensureAdminSession();
   if (!ok) return;
   await loadOrders();
+  await loadProductsForAdmin();
+  resetProductForm();
   startAdminNotifications();
 }
 

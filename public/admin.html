@@ -41,6 +41,35 @@
 
     <div class="layout" style="margin-top:1rem;">
       <section class="panel">
+        <h3>Manage Products</h3>
+        <form id="productForm">
+          <input id="productId" type="hidden" />
+          <label>Name <input id="productName" required /></label>
+          <div class="row">
+            <label>Category
+              <select id="productCategory" required>
+                <option value="male">male</option>
+                <option value="female">female</option>
+              </select>
+            </label>
+            <label>Price <input id="productPrice" type="number" min="1" required /></label>
+          </div>
+          <div class="row">
+            <label>Color <input id="productColor" required /></label>
+            <label>Sizes (comma-separated) <input id="productSizes" placeholder="S,M,L,XL" required /></label>
+          </div>
+          <label>Image URL <input id="productImage" required /></label>
+          <label>Description <textarea id="productDescription"></textarea></label>
+          <div style="display:flex;gap:.5rem;">
+            <button type="submit" id="productSubmitBtn">Create Product</button>
+            <button type="button" class="ghost" id="productCancelEditBtn">Cancel Edit</button>
+          </div>
+        </form>
+        <p id="productStatus" class="muted"></p>
+        <div id="productList" class="list"></div>
+      </section>
+
+      <section class="panel">
         <h3>Create Admin</h3>
         <form id="createAdminForm">
           <label>Full Name <input id="newAdminName" required /></label>
@@ -60,6 +89,10 @@
         <p id="resetPasswordStatus" class="muted"></p>
       </section>
     </div>
+    <footer class="site-footer">
+      <p>Hush Fashion</p>
+      <p>Admin Console • Orders, Products, and Messaging</p>
+    </footer>
   </div>
   <script src="/js/admin.js"></script>
 </body>
